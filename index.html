@@ -811,6 +811,7 @@ button.go{border:0}
     <dt>収録件数</dt><dd id="a-total"></dd>
     <dt>地図</dt><dd><a href="https://openfreemap.org" target="_blank" rel="noopener">OpenFreeMap</a> © <a href="https://openmaptiles.org" target="_blank" rel="noopener">OpenMapTiles</a> Data from <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>。表示できない端末では<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank" rel="noopener">地理院タイル</a>を使います。</dd>
     <dt>トイレ位置</dt><dd>© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors（ODbL）／各自治体のオープンデータ。自治体データの出典は各トイレの詳細に表示します。</dd>
+    <dt>経路</dt><dd>Powered by <a href="https://www.geoapify.com/" target="_blank" rel="noopener">Geoapify</a>（© OpenStreetMap contributors）。経路を取得できないときは直線で案内します。</dd>
     <dt>データ整理</dt><dd>Open Infra Japan、japan-toilet-map の公開データを利用</dd>
   </dl>
 </section>
@@ -1159,7 +1160,7 @@ let baseOk=false;
 function fallbackBase(){if(baseOk||fallbackBase.done)return;fallbackBase.done=true;
   L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png',{maxZoom:19,maxNativeZoom:18,minZoom:5,attribution:GSI_ATTR+' | '+OSM_ATTR}).addTo(map)}
 try{
-  const gl=L.maplibreGL({style:'https://tiles.openfreemap.org/styles/liberty',attribution:'<a href="https://openfreemap.org" target="_blank" rel="noopener">OpenFreeMap</a> © <a href="https://openmaptiles.org" target="_blank" rel="noopener">OpenMapTiles</a> Data from <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>'}).addTo(map);
+  const gl=L.maplibreGL({style:'https://tiles.openfreemap.org/styles/liberty',attribution:'<a href="https://openfreemap.org" target="_blank" rel="noopener">OpenFreeMap</a> © <a href="https://openmaptiles.org" target="_blank" rel="noopener">OpenMapTiles</a> Data from <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> | Powered by <a href="https://www.geoapify.com/" target="_blank" rel="noopener">Geoapify</a>'}).addTo(map);
   const m=gl.getMaplibreMap();
   m.on('load',()=>{baseOk=true;
     // ラベルを日本語優先にする
@@ -1259,27 +1260,50 @@ function openDetail(i){selected=i;draw();
 }
 function toast(t,ms){const e=$('#toast');e.textContent=t;e.hidden=false;clearTimeout(toast.t);toast.t=setTimeout(()=>e.hidden=true,ms||2200)}
 
-// ---- in-app guidance: 直線の方向と残り距離を現在地に合わせて更新する（道なりの経路ではない）
-let guide=null, heading=null, hasFix=false;
+// ---- in-app guidance: 歩行経路（OSRM）を地図に描き、現在地に合わせて残り距離と進む方向を更新する
+let guide=null, heading=null, hasFix=false, me=null;
 const DIRS=['北','北東','東','南東','南','南西','西','北西'];
+// 経路: Geoapify Routing API（徒歩）。キーは許可オリジンで制限している。差し替えるときはここと parseRoute だけ直す
+const ROUTE_KEY='9707dc90bc904369a5ec1386f2fff9d2';
+const routeUrl=(s,e)=>`https://api.geoapify.com/v1/routing?waypoints=${s[0]},${s[1]}|${e[0]},${e[1]}&mode=walk&apiKey=${ROUTE_KEY}`;
+function parseRoute(j){const g=j&&j.features&&j.features[0]&&j.features[0].geometry;if(!g)return null;const c=g.type==='MultiLineString'?[].concat(...g.coordinates):g.coordinates;return c&&c.length>1?c.map(x=>[x[1],x[0]]):null}
 function bearing(a,b,c,d){const r=Math.PI/180,y=Math.sin((d-b)*r)*Math.cos(c*r),x=Math.cos(a*r)*Math.sin(c*r)-Math.sin(a*r)*Math.cos(c*r)*Math.cos((d-b)*r);return (Math.atan2(y,x)/r+360)%360}
+const here=()=>me||origin;
+function setPath(pts){guide.path=pts;guide.line.setLatLngs(pts);guide.casing.setLatLngs(pts)}
+function fetchRoute(){if(!guide)return;const g=guide,i=g.i,s=here();g.lastReq=Date.now();
+  fetch(routeUrl(s,[P[i][0],P[i][1]])).then(r=>{if(!r.ok)throw 0;return r.json()}).then(j=>{
+    if(guide!==g)return;const c=parseRoute(j);
+    if(!c)throw 0;
+    const pts=c.slice();pts.push([P[i][0],P[i][1]]);g.routed=true;setPath(pts);
+    if(!g.fitted){g.fitted=true;map.fitBounds(g.line.getBounds(),{paddingTopLeft:[40,120],paddingBottomRight:[40,($('#sheet').offsetHeight||190)+30],maxZoom:18})}
+    updateGuide()}).catch(()=>{if(guide===g&&!g.routed&&!g.warned){g.warned=true;toast('経路を取得できないため、直線で案内します',4000)}})}
 function startGuide(i){
-  if(!hasFix){toast('現在地がわからないため、地図の中心からの方向を表示します')}
+  if(!hasFix){toast('現在地がわからないため、地図の中心から案内します')}
   stopGuide(true);
-  guide={i,casing:L.polyline([origin,[P[i][0],P[i][1]]],{color:'#fff',weight:10,opacity:.9,lineCap:'round',interactive:false}).addTo(map),line:L.polyline([origin,[P[i][0],P[i][1]]],{color:'#e8590c',weight:5,lineCap:'round',interactive:false}).addTo(map),watch:null};
+  const s=here(),pts=[s,[P[i][0],P[i][1]]];
+  guide={i,path:pts,routed:false,lastReq:0,watch:null,
+    casing:L.polyline(pts,{color:'#fff',weight:11,opacity:.95,lineCap:'round',lineJoin:'round',interactive:false}).addTo(map),
+    line:L.polyline(pts,{color:'#1a73e8',weight:6,lineCap:'round',lineJoin:'round',interactive:false}).addTo(map)};
   selected=i;document.body.classList.add('guiding');$('#guide').hidden=false;$('#g-n').textContent=title(i);$('#g-gmap').href=gmap(i);
-  map.fitBounds(guide.line.getBounds(),{paddingTopLeft:[40,110],paddingBottomRight:[40,($('#sheet').offsetHeight||190)+30],maxZoom:17});
+  map.fitBounds(guide.line.getBounds(),{paddingTopLeft:[40,120],paddingBottomRight:[40,($('#sheet').offsetHeight||190)+30],maxZoom:18});
+  fetchRoute();
   if(navigator.geolocation)guide.watch=navigator.geolocation.watchPosition(p=>{hasFix=true;setMe(p.coords.latitude,p.coords.longitude,false);if(p.coords.heading!=null&&!isNaN(p.coords.heading)&&p.coords.speed>0.5)heading=p.coords.heading;updateGuide()},()=>{}, {enableHighAccuracy:true,maximumAge:2000,timeout:15000});
   if(window.DeviceOrientationEvent&&typeof DeviceOrientationEvent.requestPermission==='function'){DeviceOrientationEvent.requestPermission().catch(()=>{})}
   draw();updateGuide()}
 function showHeading(){const e=document.getElementById('me-dot');if(!e)return;if(heading==null){e.classList.remove('dir');return}e.classList.add('dir');e.firstChild.style.transform=`rotate(${heading}deg)`}
-function updateGuide(){showHeading();if(!guide)return;const i=guide.i,d=dist(origin[0],origin[1],P[i][0],P[i][1]),b=bearing(origin[0],origin[1],P[i][0],P[i][1]);
-  guide.line.setLatLngs([origin,[P[i][0],P[i][1]]]);guide.casing.setLatLngs([origin,[P[i][0],P[i][1]]]);
-  const rot=b;
-  $('#g-arrow').style.transform=`rotate(${rot}deg)`;
-  if(d<20){$('#g-d').textContent='まもなく到着';}
-  else $('#g-d').textContent=`${DIRS[Math.round(b/45)%8]}へ ${fmtD(d)}`;
-  $('#g-n').textContent=`${title(i)}・徒歩 約${walk(d)}分`}
+// 経路上で現在地にいちばん近い点を探し、そこから先の距離と次に進む方向を出す
+function progress(){const s=here(),p=guide.path;let bi=0,bd=1e9;
+  for(let k=0;k<p.length;k++){const d=dist(s[0],s[1],p[k][0],p[k][1]);if(d<bd){bd=d;bi=k}}
+  let rest=0;for(let k=bi;k<p.length-1;k++)rest+=dist(p[k][0],p[k][1],p[k+1][0],p[k+1][1]);
+  let ni=Math.min(bi+1,p.length-1);while(ni<p.length-1&&dist(s[0],s[1],p[ni][0],p[ni][1])<12)ni++;
+  return {off:bd,rest:rest+(bi===0?bd:0),next:p[ni]}}
+function updateGuide(){showHeading();if(!guide)return;const i=guide.i,s=here();
+  if(!guide.routed)setPath([s,[P[i][0],P[i][1]]]);
+  const g=progress(),direct=dist(s[0],s[1],P[i][0],P[i][1]),d=guide.routed?Math.max(g.rest,direct):direct,b=bearing(s[0],s[1],g.next[0],g.next[1]);
+  if(guide.routed&&g.off>40&&Date.now()-guide.lastReq>20000)fetchRoute(); // 経路から外れたら引き直す
+  $('#g-arrow').style.transform=`rotate(${b}deg)`;
+  $('#g-d').textContent=direct<20?'まもなく到着':`あと ${fmtD(d)}`;
+  $('#g-n').textContent=`${title(i)}・徒歩 約${walk(d)}分・まず${DIRS[Math.round(b/45)%8]}へ`}
 function stopGuide(silent){if(!guide)return;if(guide.watch!=null)navigator.geolocation.clearWatch(guide.watch);map.removeLayer(guide.line);map.removeLayer(guide.casing);guide=null;document.body.classList.remove('guiding');$('#guide').hidden=true;if(!silent){selected=-1;draw()}}
 window.addEventListener('deviceorientationabsolute',e=>{if(e.alpha!=null){heading=(360-e.alpha)%360;updateGuide()}});
 window.addEventListener('deviceorientation',e=>{if(e.webkitCompassHeading!=null){heading=e.webkitCompassHeading;updateGuide()}});
@@ -1294,10 +1318,9 @@ function setSort(m){sortMode=m;$('#s-near').setAttribute('aria-pressed',m==='nea
 $('#g-stop').onclick=()=>stopGuide(false);
 $('#info').onclick=()=>{$('#about').hidden=false;$('#detail').hidden=true};
 $('#a-total').textContent=P.length.toLocaleString('ja-JP')+' 件（位置がわかるもの）';
-let following=true;
-map.on('moveend',()=>{draw();if(!following){const c=map.getCenter();origin=[c.lat,c.lng];renderSheet()}});
-map.on('dragstart',()=>{following=false});
-function setMe(lat,lng,move){origin=[lat,lng];following=true;
+// 現在地がわかっているときは常に現在地から、わからないときは地図の中心から近い順に並べる
+map.on('moveend',()=>{draw();if(!me){const c=map.getCenter();origin=[c.lat,c.lng];renderSheet()}});
+function setMe(lat,lng,move){me=[lat,lng];origin=[lat,lng];
   if(!meMarker)meMarker=L.marker([lat,lng],{icon:L.divIcon({className:'',iconSize:[20,20],iconAnchor:[13,13],html:'<div class="me" id="me-dot"><i></i></div>'}),interactive:false,zIndexOffset:1000});
   meMarker.setLatLng([lat,lng]);if(move)map.setView([lat,lng],17);draw();renderSheet()}
 function locate(first){
@@ -1307,7 +1330,7 @@ function locate(first){
       toast(why+'、現在地を表示できません（武蔵小杉駅を中心に表示中）',9000)},{enableHighAccuracy:true,timeout:12000,maximumAge:30000})}
 $('#locate').onclick=()=>locate(false);
 draw();renderSheet();locate(true);
-window.__app={P,nearest,visible,score,draw,map,setMe,startGuide,stopGuide};
+window.__app={P,nearest,visible,score,draw,map,setMe,startGuide,stopGuide,get guide(){return guide}};
 </script>
 </body>
 </html>
