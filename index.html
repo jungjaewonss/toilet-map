@@ -700,14 +700,17 @@ button:focus-visible,a:focus-visible{outline:3px solid var(--brand);outline-offs
 #info{bottom:calc(var(--sheet-h,190px) + 72px);font-weight:700;font-size:17px;font-family:Georgia,serif}
 
 /* pins */
-.pin{width:30px;height:30px;border-radius:50% 50% 50% 4px;transform:rotate(-45deg);background:var(--brand);border:2px solid #fff;display:grid;place-items:center;box-shadow:0 1px 4px rgba(0,0,0,.4)}
+.pin{width:32px;height:32px;border-radius:50% 50% 50% 4px;transform:rotate(-45deg);background:var(--brand);border:2px solid #fff;display:grid;place-items:center;box-shadow:0 1px 4px rgba(0,0,0,.4)}
 .pin b{transform:rotate(45deg);font-size:11px;color:#fff;font-weight:700;font-variant-numeric:tabular-nums}
 .pin.osm{background:var(--osm)}
 .pin.fac{border-radius:8px;transform:none}
 .pin.fac b{transform:none}
-.pin.sel{outline:3px solid var(--star);outline-offset:1px}
+.pin.sel{outline:4px solid var(--star);outline-offset:2px;scale:1.25}
+.pin b{letter-spacing:-.02em}
 .clu{border-radius:50%;background:var(--brand);color:#fff;display:grid;place-items:center;font-weight:700;font-size:12px;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4);font-variant-numeric:tabular-nums;opacity:.92}
-.me{width:18px;height:18px;border-radius:50%;background:#1a73e8;border:3px solid #fff;box-shadow:0 0 0 6px rgba(26,115,232,.25)}
+.me{position:relative;width:20px;height:20px;border-radius:50%;background:#1a73e8;border:3px solid #fff;box-shadow:0 0 0 6px rgba(26,115,232,.25)}
+.me i{position:absolute;left:50%;top:50%;width:0;height:0;margin:-34px 0 0 -11px;border-left:11px solid transparent;border-right:11px solid transparent;border-bottom:22px solid rgba(26,115,232,.75);transform-origin:11px 34px;display:none}
+.me.dir i{display:block}
 
 /* bottom sheet */
 #sheet{position:absolute;z-index:600;left:0;right:0;bottom:0;background:var(--surface);border-radius:18px 18px 0 0;box-shadow:var(--shadow);padding:6px 16px calc(env(safe-area-inset-bottom,0px) + 12px);max-height:72%;display:flex;flex-direction:column;gap:10px}
@@ -851,9 +854,9 @@ function pass(i){const f=P[i][2];
   return true}
 
 // ---- map
-const map=L.map('map',{zoomControl:false,attributionControl:true,preferCanvas:true}).setView(HOME,16);
+const map=L.map('map',{zoomControl:false,attributionControl:true,preferCanvas:true}).setView(HOME,17);
 map.attributionControl.setPrefix(false);
-L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png',{maxZoom:18,minZoom:5,
+L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png',{maxZoom:19,maxNativeZoom:18,minZoom:5,
   attribution:'<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank" rel="noopener">地理院タイル</a> | © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors'}).addTo(map);
 const layer=L.layerGroup().addTo(map);
 let origin=HOME.slice(), meMarker=null, selected=-1, sortMode='near';
@@ -867,7 +870,7 @@ function visible(){const b=map.getBounds(),out=[];
 
 function pinIcon(i){const f=P[i][2],s=score(i);
   const cls='pin'+(isOsm(f)?' osm':'')+(isFac(f)?' fac':'')+(i===selected?' sel':'');
-  return L.divIcon({className:'',iconSize:[30,30],iconAnchor:[15,isFac(f)?15:30],html:`<div class="${cls}"><b>${s?s.avg.toFixed(1):''}</b></div>`})}
+  return L.divIcon({className:'',iconSize:[30,30],iconAnchor:[15,isFac(f)?15:30],html:`<div class="${cls}"><b>${s?s.avg.toFixed(1):'WC'}</b></div>`})}
 
 function draw(){layer.clearLayers();
   const v=visible(), z=map.getZoom();
@@ -953,20 +956,21 @@ function bearing(a,b,c,d){const r=Math.PI/180,y=Math.sin((d-b)*r)*Math.cos(c*r),
 function startGuide(i){
   if(!hasFix){toast('現在地がわからないため、地図の中心からの方向を表示します')}
   stopGuide(true);
-  guide={i,line:L.polyline([origin,[P[i][0],P[i][1]]],{color:getComputedStyle(document.documentElement).getPropertyValue('--brand').trim()||'#0b6e8f',weight:5,dashArray:'2 10',lineCap:'round'}).addTo(map),watch:null};
+  guide={i,casing:L.polyline([origin,[P[i][0],P[i][1]]],{color:'#fff',weight:10,opacity:.9,lineCap:'round',interactive:false}).addTo(map),line:L.polyline([origin,[P[i][0],P[i][1]]],{color:'#e8590c',weight:5,lineCap:'round',interactive:false}).addTo(map),watch:null};
   selected=i;document.body.classList.add('guiding');$('#guide').hidden=false;$('#g-n').textContent=title(i);$('#g-gmap').href=gmap(i);
-  map.fitBounds(guide.line.getBounds(),{paddingTopLeft:[40,110],paddingBottomRight:[40,($('#sheet').offsetHeight||190)+30],maxZoom:18});
+  map.fitBounds(guide.line.getBounds(),{paddingTopLeft:[40,110],paddingBottomRight:[40,($('#sheet').offsetHeight||190)+30],maxZoom:17});
   if(navigator.geolocation)guide.watch=navigator.geolocation.watchPosition(p=>{hasFix=true;setMe(p.coords.latitude,p.coords.longitude,false);if(p.coords.heading!=null&&!isNaN(p.coords.heading)&&p.coords.speed>0.5)heading=p.coords.heading;updateGuide()},()=>{}, {enableHighAccuracy:true,maximumAge:2000,timeout:15000});
   if(window.DeviceOrientationEvent&&typeof DeviceOrientationEvent.requestPermission==='function'){DeviceOrientationEvent.requestPermission().catch(()=>{})}
   draw();updateGuide()}
-function updateGuide(){if(!guide)return;const i=guide.i,d=dist(origin[0],origin[1],P[i][0],P[i][1]),b=bearing(origin[0],origin[1],P[i][0],P[i][1]);
-  guide.line.setLatLngs([origin,[P[i][0],P[i][1]]]);
+function showHeading(){const e=document.getElementById('me-dot');if(!e)return;if(heading==null){e.classList.remove('dir');return}e.classList.add('dir');e.firstChild.style.transform=`rotate(${heading}deg)`}
+function updateGuide(){showHeading();if(!guide)return;const i=guide.i,d=dist(origin[0],origin[1],P[i][0],P[i][1]),b=bearing(origin[0],origin[1],P[i][0],P[i][1]);
+  guide.line.setLatLngs([origin,[P[i][0],P[i][1]]]);guide.casing.setLatLngs([origin,[P[i][0],P[i][1]]]);
   const rot=heading==null?b:(b-heading+360)%360;
   $('#g-arrow').style.transform=`rotate(${rot}deg)`;
   if(d<20){$('#g-d').textContent='まもなく到着';}
   else $('#g-d').textContent=`${DIRS[Math.round(b/45)%8]}へ ${fmtD(d)}`;
-  $('#g-n').textContent=`${title(i)}・徒歩 約${walk(d)}分`+(heading==null?'（矢印は北が上）':'')}
-function stopGuide(silent){if(!guide)return;if(guide.watch!=null)navigator.geolocation.clearWatch(guide.watch);map.removeLayer(guide.line);guide=null;document.body.classList.remove('guiding');$('#guide').hidden=true;if(!silent){selected=-1;draw()}}
+  $('#g-n').textContent=`${title(i)}・徒歩 約${walk(d)}分`+(heading==null?'（矢印は北が上）':'（矢印はスマホの向き基準）')}
+function stopGuide(silent){if(!guide)return;if(guide.watch!=null)navigator.geolocation.clearWatch(guide.watch);map.removeLayer(guide.line);map.removeLayer(guide.casing);guide=null;document.body.classList.remove('guiding');$('#guide').hidden=true;if(!silent){selected=-1;draw()}}
 window.addEventListener('deviceorientationabsolute',e=>{if(e.alpha!=null){heading=(360-e.alpha)%360;updateGuide()}});
 window.addEventListener('deviceorientation',e=>{if(e.webkitCompassHeading!=null){heading=e.webkitCompassHeading;updateGuide()}});
 // ---- events
@@ -984,7 +988,7 @@ let following=true;
 map.on('moveend',()=>{draw();if(!following){const c=map.getCenter();origin=[c.lat,c.lng];renderSheet()}});
 map.on('dragstart',()=>{following=false});
 function setMe(lat,lng,move){origin=[lat,lng];following=true;
-  if(!meMarker)meMarker=L.marker([lat,lng],{icon:L.divIcon({className:'',iconSize:[18,18],html:'<div class="me"></div>'}),interactive:false,zIndexOffset:1000});
+  if(!meMarker)meMarker=L.marker([lat,lng],{icon:L.divIcon({className:'',iconSize:[20,20],iconAnchor:[13,13],html:'<div class="me" id="me-dot"><i></i></div>'}),interactive:false,zIndexOffset:1000});
   meMarker.setLatLng([lat,lng]);if(move)map.setView([lat,lng],17);draw();renderSheet()}
 function locate(first){
   if(!navigator.geolocation||!window.isSecureContext){toast('このページが https で開かれていないため、現在地を表示できません（武蔵小杉駅を中心に表示中）',9000);return}
